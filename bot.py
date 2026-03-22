@@ -7,6 +7,7 @@ Telegram: @qntrade
 import time
 import requests
 import asyncio
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from web3 import Web3
@@ -24,9 +25,11 @@ from config import (
     CSV_LOG_FILE,
     DB_LOG_FILE,
     MIN_TRADE_SIZE,
-    MAX_SLIPPAGE
+    MAX_SLIPPAGE,
+    ENABLE_STRATEGY_PIPELINE
 )
 from data_logger import DataLogger
+from strategy_engine import StrategyPipeline
 
 
 class PolyArbitrageBot:
@@ -45,6 +48,9 @@ class PolyArbitrageBot:
         self.logger = None
         if ENABLE_DATA_LOGGING:
             self.logger = DataLogger(CSV_LOG_FILE, DB_LOG_FILE)
+
+        # Optional strategy pipeline for indicator/rule experimentation
+        self.strategy_pipeline = StrategyPipeline() if ENABLE_STRATEGY_PIPELINE else None
         
         # Initialize Web3 (for actual trading)
         self.web3 = None
@@ -97,20 +103,20 @@ class PolyArbitrageBot:
             print(f"[✗] Failed to query market list: {e}")
             return []
     
-    def get_market_orderbook(self, market_id: str) -> Optional[Dict[str, Any]]:
-        """Query market orderbook data (CLOB API)"""
+    def get_market_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """Query token orderbook data (CLOB API)"""
         try:
             # Query orderbook via CLOB API
             response = requests.get(
                 f"{CLOB_API_URL}/book",
-                params={'market': market_id},
+                params={'token_id': token_id},
                 timeout=5
             )
             response.raise_for_status()
             return response.json()
         
         except Exception as e:
-            print(f"[✗] Failed to query orderbook ({market_id}): {e}")
+            print(f"[✗] Failed to query orderbook ({token_id}): {e}")
             return None
     
     def get_market_prices(self, market_id: str) -> Optional[Dict[str, float]]:
@@ -124,50 +130,77 @@ class PolyArbitrageBot:
             response.raise_for_status()
             market_data = response.json()
             
-            # Also query orderbook data
-            orderbook = self.get_market_orderbook(market_id)
+            def _load_json_if_needed(value: Any):
+                if isinstance(value, str):
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return None
+                return value
+
+            def _best_ask(book: Optional[Dict[str, Any]]) -> Optional[float]:
+                if not book:
+                    return None
+                asks = book.get('asks', [])
+                prices = []
+                for ask in asks:
+                    try:
+                        prices.append(float(ask.get('price')))
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                return min(prices) if prices else None
+
+            def _best_bid(book: Optional[Dict[str, Any]]) -> Optional[float]:
+                if not book:
+                    return None
+                bids = book.get('bids', [])
+                prices = []
+                for bid in bids:
+                    try:
+                        prices.append(float(bid.get('price')))
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                return max(prices) if prices else None
             
             # Extract Yes/No ticket prices
-            # May need adjustment based on actual API response structure
             yes_price = None
             no_price = None
             yes_ask = None
             no_ask = None
             yes_bid = None
             no_bid = None
+            yes_token_id = None
+            no_token_id = None
             
             # Try extracting prices from Gamma API
             if 'outcomePrices' in market_data and 'outcomes' in market_data:
-                import json
-                # Parse if outcomePrices and outcomes are JSON strings
-                prices_raw = market_data['outcomePrices']
-                outcomes_raw = market_data['outcomes']
+                # Parse if outcomePrices/outcomes are JSON strings
+                prices = _load_json_if_needed(market_data.get('outcomePrices'))
+                outcomes = _load_json_if_needed(market_data.get('outcomes'))
+                clob_token_ids = _load_json_if_needed(market_data.get('clobTokenIds'))
                 
-                if isinstance(prices_raw, str):
-                    prices = json.loads(prices_raw)
-                else:
-                    prices = prices_raw
-                
-                if isinstance(outcomes_raw, str):
-                    outcomes = json.loads(outcomes_raw)
-                else:
-                    outcomes = outcomes_raw
-                
-                if len(prices) >= 2 and len(outcomes) >= 2:
+                if isinstance(prices, list) and isinstance(outcomes, list) and len(prices) >= 2 and len(outcomes) >= 2:
                     # Find Yes/No indices in outcomes list
                     for i, outcome in enumerate(outcomes):
                         if outcome == 'Yes' and i < len(prices):
                             yes_price = float(prices[i])
+                            if isinstance(clob_token_ids, list) and i < len(clob_token_ids):
+                                yes_token_id = str(clob_token_ids[i])
                         elif outcome == 'No' and i < len(prices):
                             no_price = float(prices[i])
+                            if isinstance(clob_token_ids, list) and i < len(clob_token_ids):
+                                no_token_id = str(clob_token_ids[i])
+
+            # Query orderbooks with CLOB token IDs (if available)
+            yes_orderbook = self.get_market_orderbook(yes_token_id) if yes_token_id else None
+            no_orderbook = self.get_market_orderbook(no_token_id) if no_token_id else None
+
+            yes_ask = _best_ask(yes_orderbook)
+            yes_bid = _best_bid(yes_orderbook)
+            no_ask = _best_ask(no_orderbook)
+            no_bid = _best_bid(no_orderbook)
             
-            # Try extracting orderbook from CLOB API
-            if orderbook:
-                # Parsing needed based on actual CLOB API response structure
-                # Example structure written here
-                pass
-            
-            # Use default values if prices are missing (error handling needed in production)
+            # Use default values if prices are missing
             if yes_price is None or no_price is None:
                 # Alternative: calculate directly from market data
                 if 'tokens' in market_data:
@@ -187,7 +220,9 @@ class PolyArbitrageBot:
                 'yes_ask': yes_ask or yes_price,
                 'no_ask': no_ask or no_price,
                 'yes_bid': yes_bid or yes_price,
-                'no_bid': no_bid or no_price
+                'no_bid': no_bid or no_price,
+                'yes_token_id': yes_token_id,
+                'no_token_id': no_token_id
             }
         
         except Exception as e:
@@ -273,6 +308,28 @@ class PolyArbitrageBot:
         
         # Check for arbitrage opportunity
         has_opportunity, profit = self.check_arbitrage(yes_price, no_price)
+
+        if self.strategy_pipeline:
+            snapshot = {
+                'market_id': market_id,
+                'market_question': market_question,
+                'timestamp': datetime.utcnow().isoformat(),
+                'yes_price': yes_price,
+                'no_price': no_price,
+                'yes_ask': prices.get('yes_ask', yes_price),
+                'no_ask': prices.get('no_ask', no_price),
+                'yes_bid': prices.get('yes_bid', yes_price),
+                'no_bid': prices.get('no_bid', no_price),
+                'yes_token_id': prices.get('yes_token_id'),
+                'no_token_id': prices.get('no_token_id')
+            }
+            strategy_result = self.strategy_pipeline.evaluate(snapshot)
+            if strategy_result['signals']:
+                print(f"[🧪] Strategy signals ({market_id}):")
+                for signal in strategy_result['signals']:
+                    print(
+                        f"    - {signal['name']} | score={signal['score']:.4f} | {signal['reason']}"
+                    )
         
         if has_opportunity:
             print(f"\n{'='*60}")

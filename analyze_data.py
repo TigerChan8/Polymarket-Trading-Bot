@@ -5,7 +5,7 @@ Analyzes arbitrage opportunity statistics from CSV and SQLite DB
 Telegram: @qntrade
 """
 import sqlite3
-import pandas as pd
+import csv
 from datetime import datetime, timedelta
 from config import DB_LOG_FILE, CSV_LOG_FILE
 import os
@@ -126,6 +126,7 @@ def export_to_csv(output_file: str = None, hours: int = 24):
         output_file = f"./logs/export_{timestamp}.csv"
     
     conn = sqlite3.connect(DB_LOG_FILE)
+    cursor = conn.cursor()
     
     query = '''
         SELECT 
@@ -146,11 +147,18 @@ def export_to_csv(output_file: str = None, hours: int = 24):
         ORDER BY timestamp DESC
     '''
     
-    df = pd.read_sql_query(query, conn, params=(hours,))
-    df.to_csv(output_file, index=False, encoding='utf-8')
+    cursor.execute(query, (hours,))
+    rows = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(columns)
+        writer.writerows(rows)
     
     print(f"[✓] Data exported to CSV: {output_file}")
-    print(f"    Total {len(df)} records")
+    print(f"    Total {len(rows)} records")
     
     conn.close()
 

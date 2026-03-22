@@ -17,3 +17,6 @@ LOG_DIR=./logs                   # Log file storage directory
 # Trading Settings
 MIN_TRADE_SIZE=0.01              # Minimum trade amount
 MAX_SLIPPAGE=0.01                # Maximum slippage (1% = 0.01)
+
+# Strategy extension settings
+ENABLE_STRATEGY_PIPELINE=false   # true = run indicator/rule pipeline during monitoring

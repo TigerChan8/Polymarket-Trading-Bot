@@ -31,6 +31,9 @@ pkill -9 -f "python3 bot.py"
 ```bash
 # Run test script (30 seconds)
 python3 test_bot.py
+
+# Run strategy pipeline dry-run (no real trading)
+python3 strategy_test.py --duration 60 --markets 10
 ```
 
 ## 📊 Data Analysis
@@ -197,6 +200,32 @@ curl -s "https://gamma-api.polymarket.com/markets?limit=1" | head -n 20
 
 # Measure API response time
 time curl -s "https://gamma-api.polymarket.com/markets?limit=1" > /dev/null
+```
+
+## 🏆 Leaderboard
+
+### Fetch Trader Leaderboard
+```bash
+# Top traders by daily PnL (overall)
+python3 leaderboard.py --category OVERALL --time-period DAY --order-by PNL --limit 25
+
+# Weekly crypto leaderboard by volume
+python3 leaderboard.py --category CRYPTO --time-period WEEK --order-by VOL --limit 25
+
+# Filter by wallet address
+python3 leaderboard.py --user 0x56687bf447db6ffa42ffe2204a05edaa20f55839
+
+# Export to CSV and JSON
+python3 leaderboard.py --category OVERALL --time-period MONTH --order-by PNL --limit 50 --out-csv logs/leaderboard.csv --out-json logs/leaderboard.json
+
+# Save snapshot to SQLite for trend analytics
+python3 leaderboard.py --category OVERALL --time-period DAY --order-by PNL --limit 50 --save-db logs/leaderboard.db
+
+# Compare latest vs previous snapshot and show rank movers
+python3 leaderboard_analytics.py --db logs/leaderboard.db --category OVERALL --time-period DAY --order-by PNL --movers 15
+
+# Track one wallet across snapshots
+python3 leaderboard_analytics.py --db logs/leaderboard.db --user 0x56687bf447db6ffa42ffe2204a05edaa20f55839
 ```
 
 ## 📝 Useful Combined Commands

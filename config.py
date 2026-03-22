@@ -34,3 +34,6 @@ DB_LOG_FILE = os.path.join(LOG_DIR, "price_data.db")
 # Trading settings
 MIN_TRADE_SIZE = float(os.getenv("MIN_TRADE_SIZE", "0.01"))  # Minimum trade amount
 MAX_SLIPPAGE = float(os.getenv("MAX_SLIPPAGE", "0.01"))  # Maximum slippage (1%)
+
+# Strategy extension settings (for indicator/rule experimentation in data mode)
+ENABLE_STRATEGY_PIPELINE = os.getenv("ENABLE_STRATEGY_PIPELINE", "false").lower() == "true"

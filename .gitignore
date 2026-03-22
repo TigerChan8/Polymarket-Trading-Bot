@@ -1,33 +1,66 @@
-# Python
+# =========================
+# Python / virtual env
+# =========================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.python-version
+
 venv/
 env/
 ENV/
-.venv
+.venv/
 
-# Environment variables
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test / lint / type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# =========================
+# Secrets / local env
+# =========================
 .env
+.env.*
+!.env copy.example
+!.env.example
 
-# Log files
+# Optional local helper scripts
+password.py
+
+# =========================
+# Data outputs / generated files
+# =========================
 logs/
+*.log
 *.csv
 *.db
+*.sqlite
+*.sqlite3
 
-# IDE
+# Notebooks
+.ipynb_checkpoints/
+practice.ipynb
+
+# =========================
+# Editor / OS
+# =========================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
 .DS_Store
 Thumbs.db
-
-# Miscellaneous
-*.log
-.pytest_cache/

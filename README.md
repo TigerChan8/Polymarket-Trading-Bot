@@ -142,7 +142,7 @@ pip install -r requirements.txt
 
 4. **Set up environment variables**
 ```bash
-cp .env.example .env
+cp ".env copy.example" .env
 # Open .env file and modify with actual values
 ```
 
@@ -155,6 +155,7 @@ Configure your **Polymarket arbitrage trading bot** by adjusting settings in the
 - `MAX_MARKETS_TO_MONITOR`: Number of markets to monitor simultaneously
 - `PRIVATE_KEY`: Wallet private key (required for actual trading)
 - `ENABLE_DATA_LOGGING`: Enable/disable data logging
+- `ENABLE_STRATEGY_PIPELINE`: Run custom indicator/rule checks while monitoring (data mode)
 
 > **Advanced configurations available**: This Polymarket bot supports many additional strategies and optimizations. Contact [@qntrade](https://t.me/qntrade) for advanced settings and custom configurations.
 
@@ -197,6 +198,16 @@ python3 analyze_data.py 1
 # Analysis + CSV export
 python3 analyze_data.py 24 --export
 ```
+
+### Strategy Dry-Run (No Real Trading)
+
+Use this to experiment with indicators and rule signals while only querying data:
+
+```bash
+python3 strategy_test.py --duration 60 --markets 10
+```
+
+You can customize strategy logic in [strategy_engine.py](strategy_engine.py).
 
 For detailed terminal commands, see [COMMANDS.md](COMMANDS.md).
 
