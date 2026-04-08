@@ -229,17 +229,21 @@ class PolyArbitrageBot:
             print(f"[✗] Failed to query prices ({market_id}): {e}")
             return None
     
-    def check_arbitrage(self, yes_price: float, no_price: float) -> tuple[bool, float]:
+    def check_arbitrage(self, yes_ask: float, no_ask: float) -> tuple[bool, float]:
         """
-        Check for arbitrage opportunity
-        
+        Check for arbitrage opportunity using ask-side prices.
+        Deducts 2% taker fee (Polymarket standard) from gross profit.
+        BUG-1 fix: mid-prices always sum to ~1.0; ask prices expose the real cost.
+        BUG-2 fix: fee is now subtracted so edge is never overstated.
+
         Returns:
-            (opportunity_exists, expected_profit_rate)
+            (opportunity_exists, net_profit_after_fees)
         """
-        total_cost = yes_price + no_price
-        if total_cost < (1.0 - self.min_profit_margin):
-            profit = 1.0 - total_cost
-            return True, profit
+        TAKER_FEE  = 0.02  # 2% per-side Polymarket taker fee
+        total_cost = yes_ask + no_ask
+        net_profit = 1.0 - total_cost - (total_cost * TAKER_FEE)
+        if net_profit >= self.min_profit_margin:
+            return True, net_profit
         return False, 0.0
     
     def execute_trade(self, market_id: str, yes_price: float, no_price: float) -> bool:
@@ -306,8 +310,12 @@ class PolyArbitrageBot:
                 min_profit_margin=self.min_profit_margin
             )
         
-        # Check for arbitrage opportunity
-        has_opportunity, profit = self.check_arbitrage(yes_price, no_price)
+        # Check for arbitrage opportunity using ask prices (not mid-prices)
+        # BUG-1 fix: mid-prices always sum to ~1.0 by market design
+        # BUG-2 fix: check_arbitrage now deducts 2% taker fee
+        has_opportunity, profit = self.check_arbitrage(
+            prices['yes_ask'], prices['no_ask']
+        )
 
         if self.strategy_pipeline:
             snapshot = {
@@ -335,10 +343,10 @@ class PolyArbitrageBot:
             print(f"\n{'='*60}")
             print(f"[🎯] Arbitrage opportunity found!")
             print(f"    Market: {market_question or market_id}")
-            print(f"    Yes price: ${yes_price:.4f}")
-            print(f"    No price: ${no_price:.4f}")
-            print(f"    Total cost: ${yes_price + no_price:.4f}")
-            print(f"    Expected profit: ${profit:.4f} ({profit*100:.2f}%)")
+            print(f"    Yes ask:  ${prices['yes_ask']:.4f}  (mid: ${yes_price:.4f})")
+            print(f"    No ask:   ${prices['no_ask']:.4f}  (mid: ${no_price:.4f})")
+            print(f"    Total ask cost: ${prices['yes_ask'] + prices['no_ask']:.4f}")
+            print(f"    Net profit (after 2% fee): ${profit:.4f} ({profit*100:.2f}%)")
             print(f"{'='*60}\n")
             
             # Execute trade

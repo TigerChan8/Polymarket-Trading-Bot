@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import time
 from typing import Dict, Any, List, Optional, Tuple
+
+import requests
+
+DATA_BASE = "https://data-api.polymarket.com"
 
 
 def _rank_int(value: Any) -> int:
@@ -174,6 +179,159 @@ def print_user_history(
         )
 
 
+def rank_velocity_alert(
+    conn: sqlite3.Connection,
+    category: str = "WEATHER",
+    time_period: str = "ALL",
+    order_by: str = "PNL",
+    min_jump: int = 10,
+    top_n: int = 5,
+    fetch_positions: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Idea 3: Rank velocity alert.
+
+    Compares the two most recent snapshots for the given filter, surfaces
+    traders who jumped >= min_jump rank positions. For each fast-climber,
+    optionally fetches their current open positions and recent trades from
+    the Data API to surface what they are holding right now.
+
+    Returns a list of velocity alert dicts.
+    """
+    times = _get_two_latest_snapshot_times(conn, category, time_period, order_by)
+    if len(times) < 2:
+        print(
+            "[velocity] Need at least 2 snapshots. "
+            "Run weather_snapshot_daemon.py to accumulate snapshots."
+        )
+        return []
+
+    latest_rows = _load_snapshot_rows(conn, times[0], category, time_period, order_by)
+    prev_rows = _load_snapshot_rows(conn, times[1], category, time_period, order_by)
+
+    latest_map = _index_by_wallet(latest_rows)
+    prev_map = _index_by_wallet(prev_rows)
+
+    movers: List[Dict[str, Any]] = []
+    for wallet, latest in latest_map.items():
+        if wallet not in prev_map:
+            continue
+        prev = prev_map[wallet]
+        delta = _rank_int(prev.get("rank")) - _rank_int(latest.get("rank"))
+        if delta >= min_jump:
+            movers.append(
+                {
+                    "proxyWallet": latest.get("proxy_wallet"),
+                    "userName": latest.get("user_name"),
+                    "rankNow": _rank_int(latest.get("rank")),
+                    "rankPrev": _rank_int(prev.get("rank")),
+                    "rankDelta": delta,
+                    "pnlNow": latest.get("pnl", 0.0),
+                    "pnlPrev": prev.get("pnl", 0.0),
+                    "snapshotLatest": times[0],
+                    "snapshotPrev": times[1],
+                }
+            )
+
+    movers.sort(key=lambda m: m["rankDelta"], reverse=True)
+    movers = movers[:top_n]
+
+    if not movers:
+        print(f"[velocity] No traders jumped >= {min_jump} ranks between the two latest snapshots.")
+        return []
+
+    print("\n" + "=" * 72)
+    print(f"Rank Velocity Alert | category={category} | timePeriod={time_period}")
+    print(f"Comparing: {times[1]} → {times[0]}")
+    print("-" * 72)
+    for m in movers:
+        print(
+            f"  +{m['rankDelta']:>3} | #{m['rankPrev']} → #{m['rankNow']} | "
+            f"{m['userName']} | {m['proxyWallet']} | "
+            f"pnl={m['pnlNow']:.2f} (was {m['pnlPrev']:.2f})"
+        )
+
+    if not fetch_positions:
+        return movers
+
+    # For each fast-climber, fetch their current open positions and recent trades
+    print("\nFetching current positions for fast-climbers...")
+    for m in movers:
+        wallet = m.get("proxyWallet") or ""
+        if not wallet:
+            continue
+        print(f"\n  ── {m['userName'] or wallet[:16]}... (#{m['rankNow']}, +{m['rankDelta']}) ──")
+
+        # Positions
+        try:
+            pos_data = requests.get(
+                f"{DATA_BASE}/positions",
+                params={
+                    "user": wallet,
+                    "limit": 20,
+                    "sortBy": "CURRENT",
+                    "sortDirection": "DESC",
+                    "sizeThreshold": 1,
+                },
+                timeout=15,
+            ).json()
+            positions = pos_data if isinstance(pos_data, list) else []
+            m["currentPositions"] = [
+                {
+                    "title": p.get("title"),
+                    "outcome": p.get("outcome"),
+                    "currentValue": p.get("currentValue"),
+                    "cashPnl": p.get("cashPnl"),
+                    "curPrice": p.get("curPrice"),
+                }
+                for p in positions[:10]
+            ]
+            for p in m["currentPositions"][:5]:
+                print(
+                    f"    pos: {str(p.get('title') or '')[:55]:<55} | "
+                    f"{p.get('outcome')} | "
+                    f"val=${float(p.get('currentValue') or 0):,.0f} | "
+                    f"pnl=${float(p.get('cashPnl') or 0):,.0f}"
+                )
+        except Exception as e:
+            print(f"    [positions fetch error: {e}]")
+            m["currentPositions"] = []
+
+        # Recent trades
+        try:
+            trades_data = requests.get(
+                f"{DATA_BASE}/trades",
+                params={"user": wallet, "takerOnly": "true", "limit": 10, "offset": 0},
+                timeout=15,
+            ).json()
+            trades = trades_data if isinstance(trades_data, list) else []
+            m["recentTrades"] = [
+                {
+                    "title": t.get("title"),
+                    "outcome": t.get("outcome"),
+                    "side": t.get("side"),
+                    "notional": round(
+                        float(t.get("size") or 0) * float(t.get("price") or 0), 2
+                    ),
+                    "timestamp": t.get("timestamp"),
+                }
+                for t in trades[:5]
+            ]
+            for t in m["recentTrades"]:
+                print(
+                    f"    trade: {str(t.get('title') or '')[:50]:<50} | "
+                    f"{t.get('outcome')} {t.get('side')} | "
+                    f"${t.get('notional', 0):,.0f}"
+                )
+        except Exception as e:
+            print(f"    [trades fetch error: {e}]")
+            m["recentTrades"] = []
+
+        time.sleep(0.2)
+
+    return movers
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze saved leaderboard snapshots")
     parser.add_argument("--db", default="logs/leaderboard.db", help="sqlite path")
@@ -184,6 +342,22 @@ def main() -> None:
     parser.add_argument("--user", default=None, help="wallet filter")
     parser.add_argument("--user-name", default=None, help="username filter")
     parser.add_argument("--history-limit", type=int, default=20)
+    parser.add_argument(
+        "--velocity",
+        action="store_true",
+        help="Run rank velocity alert (requires >= 2 snapshots from weather_snapshot_daemon.py)",
+    )
+    parser.add_argument(
+        "--min-jump",
+        type=int,
+        default=10,
+        help="Minimum rank jump to qualify as a velocity alert (default: 10)",
+    )
+    parser.add_argument(
+        "--no-fetch-positions",
+        action="store_true",
+        help="Skip fetching live positions/trades for velocity climbers",
+    )
     args = parser.parse_args()
 
     conn = sqlite3.connect(args.db)
@@ -231,6 +405,16 @@ def main() -> None:
         user_name=args.user_name,
         limit=args.history_limit,
     )
+
+    if args.velocity:
+        rank_velocity_alert(
+            conn,
+            category=args.category,
+            time_period=args.time_period,
+            order_by=args.order_by,
+            min_jump=args.min_jump,
+            fetch_positions=not args.no_fetch_positions,
+        )
 
     conn.close()
 

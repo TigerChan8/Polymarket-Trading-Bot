@@ -20,3 +20,10 @@ MAX_SLIPPAGE=0.01                # Maximum slippage (1% = 0.01)
 
 # Strategy extension settings
 ENABLE_STRATEGY_PIPELINE=false   # true = run indicator/rule pipeline during monitoring
+
+# Weather Intelligence settings
+WEATHER_MIN_NOTIONAL=5000         # Min USD notional for a trade to count as a whale alert
+WEATHER_CONSENSUS_N=3             # Min distinct traders to trigger a consensus burst signal
+WEATHER_CONSENSUS_WINDOW_MINUTES=60  # Time window (minutes) for consensus burst detection
+WEATHER_RANK_VELOCITY_MIN_JUMP=10 # Min rank improvement to surface in velocity alerts
+WEATHER_TOP_TRADERS_LIMIT=50      # How many top WEATHER traders to monitor/score

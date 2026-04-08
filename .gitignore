@@ -51,7 +51,6 @@ logs/
 
 # Notebooks
 .ipynb_checkpoints/
-practice.ipynb
 
 # =========================
 # Editor / OS

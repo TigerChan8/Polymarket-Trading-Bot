@@ -228,6 +228,77 @@ python3 leaderboard_analytics.py --db logs/leaderboard.db --category OVERALL --t
 python3 leaderboard_analytics.py --db logs/leaderboard.db --user 0x56687bf447db6ffa42ffe2204a05edaa20f55839
 ```
 
+## 🌦️ Weather Intelligence
+
+### Browse Weather Markets
+```bash
+# Quick overview: active + recent closed weather markets
+python3 weather_markets.py
+```
+
+### Weather Leaderboard Snapshot Daemon (Idea 3 — rank velocity)
+```bash
+# Start daemon in background (snapshots every 6h → logs/leaderboard.db)
+python3 weather_snapshot_daemon.py &
+
+# Custom interval
+python3 weather_snapshot_daemon.py --interval-hours 4 &
+
+# Stop daemon
+pkill -f "weather_snapshot_daemon.py"
+```
+
+### Rank Velocity Alert (Idea 3)
+```bash
+# Who climbed fastest between last two WEATHER snapshots?  (requires ≥2 snapshots in DB)
+python3 leaderboard_analytics.py --db logs/leaderboard.db --category WEATHER --time-period ALL --velocity
+
+# Lower the jump threshold (surface more movers)
+python3 leaderboard_analytics.py --db logs/leaderboard.db --category WEATHER --time-period ALL --velocity --min-jump 5
+
+# Skip live position fetch (faster, offline)
+python3 leaderboard_analytics.py --db logs/leaderboard.db --category WEATHER --time-period ALL --velocity --no-fetch-positions
+```
+
+### Weather Whale Monitor + Consensus Burst (Ideas 1 & 2)
+```bash
+# Monitor top-20 WEATHER traders for large trades (6 loops × 60s poll)
+python3 weather_whale_monitor.py --loops 6 --poll-seconds 60 --min-notional 5000
+
+# Continuous monitoring until Ctrl+C (loops=0)
+python3 weather_whale_monitor.py --loops 0 --poll-seconds 120 --leaderboard-limit 30
+
+# Lower notional threshold + enable Discord notifications
+python3 weather_whale_monitor.py --loops 12 --min-notional 2000 --notify-discord
+
+# Custom DB / CSV output
+python3 weather_whale_monitor.py --loops 6 --db logs/weather_alerts.db --csv logs/weather_alerts.csv
+```
+
+### Trader Accuracy Scorer (Idea 5)
+```bash
+# Score top-50 WEATHER traders by historical accuracy on resolved markets
+python3 weather_accuracy.py --top-n 50
+
+# Export results to CSV
+python3 weather_accuracy.py --top-n 50 --out-csv logs/weather_accuracy.csv
+
+# Only print top-10 in table (still scores all 50)
+python3 weather_accuracy.py --top-n 50 --print-top 10
+```
+
+### DB Quick-Checks
+```bash
+# View whale alerts
+sqlite3 logs/weather_alerts.db "SELECT detected_at, title, outcome, notional FROM whale_alerts ORDER BY notional DESC LIMIT 10;"
+
+# View consensus bursts
+sqlite3 logs/weather_alerts.db "SELECT detected_at, title, outcome, trader_count, total_notional FROM consensus_bursts ORDER BY total_notional DESC LIMIT 10;"
+
+# View accuracy scores
+sqlite3 logs/weather_accuracy.db "SELECT user_name, total_trades, win_rate, weighted_accuracy, confidence_warning FROM trader_accuracy ORDER BY weighted_accuracy DESC LIMIT 20;"
+```
+
 ## 📝 Useful Combined Commands
 
 ### Bot Status Overview

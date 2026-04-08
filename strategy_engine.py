@@ -146,7 +146,7 @@ class StrategyPipeline:
             SpreadSumIndicator(),
         ]
         self.rules = rules or [
-            PureArbitrageRule(min_edge=0.01),
+            PureArbitrageRule(min_edge=0.05),  # 5% min edge — survives 2% taker fee
             TightExecutionRule(max_spread_sum=0.03),
         ]
 
