@@ -36,20 +36,99 @@ def _parse_json_field(value: Any, default: Any = None) -> Any:
     return default
 
 
-def _determine_winner(outcomes: List[str], outcome_prices: List[float]) -> Optional[str]:
+def _determine_winner(outcomes: List[str], outcome_prices: List[float],
+                      threshold: float = 0.85) -> Optional[str]:
     """
     Given outcomes list and their resolved prices, return the winning outcome label.
     The winner has a price closest to 1.0.
     Returns None if prices are still ambiguous (market not yet resolved, e.g. all ~0.5).
-    Threshold: price >= 0.9 required to be considered resolved.
+
+    Threshold: price >= 0.85 required to be considered resolved (lowered from 0.90
+    to recover ~10-15% of freshly-resolved markets that previously returned None).
+    Pass threshold=0.90 explicitly if stricter behaviour is required.
     """
     if not outcomes or not outcome_prices or len(outcomes) != len(outcome_prices):
         return None
     max_price = max(outcome_prices)
-    if max_price < 0.9:
+    if max_price < threshold:
         return None
     idx = outcome_prices.index(max_price)
     return outcomes[idx]
+
+
+# ── Market-type keyword sets ───────────────────────────────────────────────────
+_TEMPERATURE_KW = frozenset([
+    "temperature", "celsius", "fahrenheit", "hottest", "coldest", "warmest",
+    "high temp", "low temp", "heat", "heat wave", "°f", "°c", "degrees",
+])
+_EVENT_COUNT_KW = frozenset([
+    "hurricane", "tropical storm", "named storm", "landfall", "tornado",
+    "earthquake", "magnitude", "flood", "wildfire", "drought",
+    "rainfall record", "snowfall",
+])
+_INDEX_KW = frozenset([
+    "gistemp", "hottest year on record", "warmest year", "global temperature",
+    "global average", "annual temperature", "year on record",
+])
+
+
+def classify_market_type(question: str) -> str:
+    """
+    Classify a weather market question into one of three strategy buckets:
+      "temperature"  – city/regional daily or weekly temperature predictions
+      "event_count"  – storm frequency, disaster counts (harder to forecast publicly)
+      "index"        – global climate index tracking (GISTEMP, annual records)
+      "other"        – anything that doesn't match the above
+    """
+    q = (question or "").lower()
+    if any(kw in q for kw in _INDEX_KW):
+        return "index"
+    if any(kw in q for kw in _EVENT_COUNT_KW):
+        return "event_count"
+    if any(kw in q for kw in _TEMPERATURE_KW):
+        return "temperature"
+    return "other"
+
+
+def classify_resolution_horizon(end_date_str: Optional[str],
+                                 created_at_str: Optional[str] = None) -> str:
+    """
+    Classify a market's expected resolution horizon based on its endDate.
+    If createdAt is available, uses (endDate - createdAt); otherwise uses
+    (endDate - now) as a proxy.
+
+    Returns:
+      "daily"    < 3 days
+      "short"    3–30 days   ← primary target for copy-trade strategy
+      "medium"   31–180 days
+      "annual"   > 180 days
+      "unknown"  if dates are missing or unparseable
+    """
+    import datetime as _dt
+    if not end_date_str:
+        return "unknown"
+    try:
+        # Gamma returns ISO 8601 strings; strip trailing Z / timezone if present
+        def _parse(s: str) -> _dt.datetime:
+            s = s.replace("Z", "+00:00")
+            return _dt.datetime.fromisoformat(s).replace(tzinfo=_dt.timezone.utc)
+
+        end_dt = _parse(end_date_str)
+        if created_at_str:
+            start_dt = _parse(created_at_str)
+        else:
+            start_dt = _dt.datetime.now(_dt.timezone.utc)
+
+        days = (end_dt - start_dt).days
+        if days < 3:
+            return "daily"
+        if days <= 30:
+            return "short"
+        if days <= 180:
+            return "medium"
+        return "annual"
+    except Exception:
+        return "unknown"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -110,19 +189,26 @@ class WeatherMarketFetcher:
         outcome_prices = [float(p) for p in outcome_prices_raw] if outcome_prices_raw else []
         clob_token_ids = _parse_json_field(market.get("clobTokenIds"), [])
 
-        # Determine winner only for closed/archived markets
+        # Determine winner only for closed/archived markets (threshold=0.85)
         resolved_outcome: Optional[str] = None
         if market.get("closed") or market.get("archived"):
             resolved_outcome = _determine_winner(outcomes, outcome_prices)
 
+        question = market.get("question") or ""
+        end_date = market.get("endDate") or ""
+        created_at = market.get("createdAt") or market.get("startDate") or ""
+        fees_enabled = bool(market.get("feesEnabled", False))
+
         return {
             "conditionId": market.get("conditionId"),
             "marketId": market.get("id"),
-            "question": market.get("question"),
+            "question": question,
             "slug": market.get("slug"),
-            "endDate": market.get("endDate"),
+            "endDate": end_date,
+            "createdAt": created_at,
             "active": bool(market.get("active", False)),
             "closed": bool(market.get("closed", False)),
+            "feesEnabled": fees_enabled,
             "outcomes": outcomes,
             "outcomePrices": outcome_prices,
             "clobTokenIds": clob_token_ids,
@@ -133,6 +219,9 @@ class WeatherMarketFetcher:
             "liquidityClob": float(market.get("liquidityClob") or 0),
             "resolvedOutcome": resolved_outcome,
             "tags": event_tags,
+            # ── NEW: strategy classification fields ────────────────────────
+            "marketType": classify_market_type(question),
+            "resolutionHorizon": classify_resolution_horizon(end_date, created_at),
         }
 
     # ── Pagination ────────────────────────────────────────────────────────────
